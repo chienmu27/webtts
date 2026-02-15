@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>TTS Pause on #</title>
+  <style>
+    :root { 
+      --primary: #4f46e5; 
+      --text: #333; 
+      --border: #ddd; 
+      --bg: #f9f9f9; 
+      --loop-active: #10b981; 
+      --pause-color: #f59e0b; 
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { 
+      height: 100dvh; 
+      width: 100%; 
+      overflow: hidden; 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #fff; 
+    }
+
+    .widget-container { 
+      display: flex; 
+      flex-direction: column; 
+      height: 100%; 
+      padding: 10px; 
+      background: #fff; 
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    }
+
+    .controls { 
+      flex-shrink: 0; 
+      background: var(--bg); 
+      padding: 10px; 
+      border-radius: 8px; 
+      border: 1px solid #eee; 
+      display: flex; 
+      flex-direction: column; 
+      gap: 8px; 
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+      z-index: 10;
+      margin-bottom: 10px;
+    }
+
+    .content-wrapper {
+      flex-grow: 1;           
+      display: flex;
+      flex-direction: column;
+      min-height: 0; 
+    }
+
+    textarea {
+      width: 100%; 
+      height: 100%;           
+      flex-grow: 1;
+      padding: 15px; 
+      font-size: 17px; 
+      line-height: 1.6;
+      border: 1px solid var(--border); 
+      border-radius: 6px; 
+      outline: none; 
+      resize: none; 
+      color: var(--text);
+      overflow-y: auto;       
+    }
+    textarea:focus { border-color: var(--primary); }
+
+    .row { display: flex; flex-direction: column; gap: 4px; }
+
+    .speed-control-group {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px;
+    }
+
+    .btn-speed {
+      width: 44px;
+      height: 40px;
+      background: #eef2ff;
+      color: var(--primary);
+      border: none;
+      border-radius: 4px;
+      font-size: 20px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-speed:active { background: #dbeafe; }
+
+    .speed-display {
+      font-size: 18px;
+      font-weight: bold;
+      color: var(--text);
+      min-width: 60px;
+      text-align: center;
+    }
+
+    .btn-group { display: flex; gap: 8px; margin-top: 6px; }
+    .btn { 
+      border: none; 
+      border-radius: 6px; 
+      font-size: 16px; 
+      font-weight: 600; 
+      color: white; 
+      cursor: pointer; 
+      display: flex; 
+      justify-content: center; 
+      align-items: center; 
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.9; }
+
+    .btn-main { flex: 2; padding: 14px; } 
+    .btn-play { background-color: var(--primary); }
+    .btn-stop { background-color: #ef4444; display: none; }
+    .btn-pause { background-color: var(--pause-color); display: none; }
+
+    .btn-loop { flex: 1; background-color: #9ca3af; font-size: 20px; }
+    .btn-loop.active { background-color: var(--loop-active); box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
+
+    .status { text-align: center; font-size: 12px; color: #888; margin-top: 4px; min-height: 16px; }
+    .label-text { font-size:13px; font-weight:600; color:#555; margin-bottom: 4px; }
+  </style>
+</head>
+
+<body>
+  <div class="widget-container">
+
+    <div class="controls">
+
+      <div class="row">
+        <div class="label-text">語速 (Speed)</div>
+        <div class="speed-control-group">
+          <button type="button" id="btn-slow" class="btn-speed">－</button>
+          <span id="rate-display" class="speed-display">1.0</span>
+          <button type="button" id="btn-fast" class="btn-speed">＋</button>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button type="button" id="play-btn" class="btn btn-main btn-play">▶ 播放</button>
+        <button type="button" id="pause-btn" class="btn btn-main btn-pause">⏸ 暫停</button>
+        <button type="button" id="stop-btn" class="btn btn-main btn-stop">⏹ 停止</button>
+        <button type="button" id="loop-btn" class="btn btn-loop" title="重複播放">🔁</button>
+      </div>
+
+      <div class="status" id="status-msg"></div>
+    </div>
+
+    <div class="content-wrapper">
+      <textarea id="text-input" placeholder="請輸入文字... (輸入 # 可設定自動暫停點 / 區段循環點)"></textarea>
+    </div>
+
+  </div>
+
+  <script>
+    const synth = window.speechSynthesis;
+    const textInput = document.getElementById('text-input');
+
+    const btnSlow = document.getElementById('btn-slow');
+    const btnFast = document.getElementById('btn-fast');
+    const rateDisplay = document.getElementById('rate-display');
+
+    const playBtn = document.getElementById('play-btn');
+    const pauseBtn = document.getElementById('pause-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const loopBtn = document.getElementById('loop-btn');
+    const statusMsg = document.getElementById('status-msg');
+
+    let bestVoice = null;
+    let isLooping = false;
+    let isManualStop = false;
+    let isPausedState = false;
+
+    let currentRate = 1.0;
+    let sentenceQueue = [];
+    let currentSentenceIndex = 0;
+
+    // ✅ 新增：區段循環用
+    // loopStartIndex：目前區段的開始句子索引
+    // loopEndIndex：目前區段的結束 # 的索引（遇到它就跳回 loopStartIndex）
+    let loopStartIndex = 0;
+    let loopEndIndex = null;
+
+    // iOS unlock
+    let audioContext = null;
+    function unlockAudioContext() {
+      try {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.state === 'suspended') {
+          audioContext.resume();
+        }
+        const buffer = audioContext.createBuffer(1, 1, 22050);
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+        source.start(0);
+      } catch (e) {}
+    }
+
+    function autoSelectBestVoice() {
+      const allVoices = synth.getVoices();
+      if (!allVoices || allVoices.length === 0) return;
+
+      const sortedVoices = [...allVoices].sort((a, b) => {
+        const langA = (a.lang || '').toLowerCase().replace('_', '-');
+        const langB = (b.lang || '').toLowerCase().replace('_', '-');
+
+        const getScore = (lang) => {
+          if (lang.includes('zh-tw')) return 6;
+          if (lang.includes('zh-hk')) return 5;
+          if (lang.includes('zh'))    return 4;
+          if (lang.includes('en-us')) return 3;
+          if (lang.includes('en'))    return 2;
+          return 0;
+        };
+
+        const scoreA = getScore(langA);
+        const scoreB = getScore(langB);
+
+        if (scoreA > scoreB) return -1;
+        if (scoreA < scoreB) return 1;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+
+      bestVoice = sortedVoices[0] || null;
+    }
+
+    autoSelectBestVoice();
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+      speechSynthesis.onvoiceschanged = autoSelectBestVoice;
+    }
+    setTimeout(autoSelectBestVoice, 100);
+    setTimeout(autoSelectBestVoice, 1000);
+
+    function updateRateDisplay() {
+      rateDisplay.textContent = currentRate.toFixed(1);
+    }
+
+    btnSlow.addEventListener('click', () => {
+      if (currentRate > 0.5) {
+        currentRate -= 0.1;
+        currentRate = parseFloat(currentRate.toFixed(1));
+        updateRateDisplay();
+      }
+    });
+
+    btnFast.addEventListener('click', () => {
+      if (currentRate < 3.0) {
+        currentRate += 0.1;
+        currentRate = parseFloat(currentRate.toFixed(1));
+        updateRateDisplay();
+      }
+    });
+
+    loopBtn.addEventListener('click', () => {
+      isLooping = !isLooping;
+      loopBtn.classList.toggle('active', isLooping);
+
+      if (!isPausedState && (pauseBtn.style.display === 'flex')) {
+        statusMsg.textContent = isLooping ? "🔁 區段循環中" : "播放中";
+      }
+    });
+
+    function splitTextIntoChunks(text) {
+      const regex = /[^#。？！.?!;\n\r]+[。？！.?!;\n\r]*|#/g;
+      const chunks = text.match(regex);
+      return chunks || [text];
+    }
+
+    // ✅ 找出「目前句子索引」後面的下一個 #，當作區段結尾
+    function findNextHashIndex(startIndex) {
+      for (let i = startIndex; i < sentenceQueue.length; i++) {
+        if ((sentenceQueue[i] || '').trim() === '#') return i;
+      }
+      return null;
+    }
+
+    function playNextChunk() {
+      if (isManualStop || isPausedState) return;
+
+      if (currentSentenceIndex >= sentenceQueue.length) {
+        // 播放完畢
+        resetUI();
+        return;
+      }
+
+      const chunkText = sentenceQueue[currentSentenceIndex];
+
+      // ======================================
+      // ✅ 核心：# 行為（區段循環模式）
+      // ======================================
+      if (chunkText.trim() === '#') {
+
+        // 🔁 開啟重複播放：這個 # 是區段結尾 -> 跳回區段開頭
+        if (isLooping) {
+          // 若 loopStartIndex 不合理，保護一下
+          loopStartIndex = Math.max(0, loopStartIndex);
+
+          // 跳回區段開頭
+          currentSentenceIndex = loopStartIndex;
+
+          statusMsg.textContent = "🔁 區段循環中";
+
+          setTimeout(() => {
+            playNextChunk();
+          }, 50);
+          return;
+        }
+
+        // ❗沒開啟重複播放：遇到 # 暫停（原本功能）
+        currentSentenceIndex++;
+        pauseSpeak();
+        statusMsg.textContent = "已暫停";
+        return;
+      }
+      // ======================================
+
+      const utterThis = new SpeechSynthesisUtterance(chunkText);
+
+      if (bestVoice) {
+        utterThis.voice = bestVoice;
+        utterThis.lang = bestVoice.lang;
+      }
+
+      utterThis.rate = currentRate;
+      utterThis.pitch = 1.0;
+
+      utterThis.onend = () => {
+        if (isManualStop || isPausedState) return;
+
+        currentSentenceIndex++;
+
+        // ===============================
+        // ✅ 重要：當播放到區段結尾之前
+        // 若下一個是 #，那就是區段結束點
+        // ===============================
+        if (isLooping) {
+          // 如果還沒設定 loopEndIndex，就動態抓
+          if (loopEndIndex === null) {
+            loopEndIndex = findNextHashIndex(loopStartIndex);
+          }
+
+          // 如果下一句剛好是 loopEndIndex (#)
+          // 下一次 playNextChunk() 會進入 # 處理，自動跳回 loopStartIndex
+        }
+
+        playNextChunk();
+      };
+
+      utterThis.onerror = (e) => {
+        if (e.error !== 'interrupted' && e.error !== 'canceled') {
+          if (!isManualStop) {
+            currentSentenceIndex++;
+            playNextChunk();
+          }
+        }
+      };
+
+      synth.speak(utterThis);
+    }
+
+    function speak() {
+      if (isPausedState) {
+        resumeSpeak();
+        return;
+      }
+
+      const fullText = textInput.value;
+      if (fullText.trim() === '') {
+        textInput.focus();
+        return;
+      }
+
+      const startPos = textInput.selectionStart;
+      let textSegment = fullText.substring(startPos);
+      if (textSegment.trim().length === 0) textSegment = fullText;
+      textSegment = textSegment.trim();
+
+      isManualStop = false;
+      isPausedState = false;
+      currentSentenceIndex = 0;
+
+      updateUIState('playing');
+
+      sentenceQueue = splitTextIntoChunks(textSegment);
+
+      // ✅ 每次播放都重新設定區段循環資訊
+      // 以「第一個 #」為區段結尾（也就是 # 和 # 之間）
+      loopStartIndex = 0;
+      loopEndIndex = findNextHashIndex(loopStartIndex);
+
+      setTimeout(() => {
+        playNextChunk();
+      }, 50);
+    }
+
+    playBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+
+      isManualStop = true;
+      synth.cancel();
+
+      unlockAudioContext();
+
+      const unlockUtterance = new SpeechSynthesisUtterance(" ");
+      unlockUtterance.volume = 0;
+      synth.speak(unlockUtterance);
+
+      setTimeout(() => {
+        speak();
+      }, 120);
+    });
+
+    function pauseSpeak() {
+      isPausedState = true;
+      synth.cancel();
+      updateUIState('paused');
+    }
+
+    function resumeSpeak() {
+      if (!isPausedState) return;
+      isPausedState = false;
+      isManualStop = false;
+      updateUIState('playing');
+      playNextChunk();
+    }
+
+    pauseBtn.addEventListener('click', () => {
+      if (isPausedState) resumeSpeak();
+      else pauseSpeak();
+    });
+
+    stopBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      isManualStop = true;
+      sentenceQueue = [];
+      synth.cancel();
+      resetUI();
+    });
+
+    function updateUIState(state) {
+      if (state === 'playing') {
+        playBtn.style.display = 'none';
+        pauseBtn.style.display = 'flex';
+        pauseBtn.textContent = "⏸ 暫停";
+        stopBtn.style.display = 'flex';
+        statusMsg.textContent = isLooping ? "🔁 區段循環中" : "播放中";
+      } else if (state === 'paused') {
+        playBtn.style.display = 'none';
+        pauseBtn.style.display = 'flex';
+        pauseBtn.textContent = "▶ 繼續";
+        stopBtn.style.display = 'flex';
+        statusMsg.textContent = "暫停";
+      } else if (state === 'stopped') {
+        playBtn.style.display = 'flex';
+        pauseBtn.style.display = 'none';
+        stopBtn.style.display = 'none';
+        pauseBtn.textContent = "⏸ 暫停";
+        statusMsg.textContent = "";
+      }
+    }
+
+    function resetUI() {
+      isPausedState = false;
+      isManualStop = false;
+      currentSentenceIndex = 0;
+
+      // reset 區段資訊
+      loopStartIndex = 0;
+      loopEndIndex = null;
+
+      updateUIState('stopped');
+    }
+  </script>
+</body>
+</html>
