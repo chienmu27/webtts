@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>文字轉語音</title>
+  <title>TTS文字轉語音</title>
   <!-- 引入 Tesseract.js 用於圖片文字辨識 -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
@@ -15,6 +15,7 @@
       --loop-active: #10b981; 
       --pause-color: #f59e0b; 
       --ocr-color: #6366f1;
+      --ocr-vert-color: #8b5cf6;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -131,12 +132,11 @@
     .btn-loop { flex: 1; background-color: #9ca3af; font-size: 20px; }
     .btn-loop.active { background-color: var(--loop-active); box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
 
-    .btn-ocr { 
-      background-color: var(--ocr-color); 
-      padding: 10px; 
-      font-size: 15px;
-      margin-bottom: 4px;
-    }
+    /* OCR 按鈕樣式 */
+    .ocr-options { display: flex; gap: 8px; }
+    .btn-ocr { flex: 1; padding: 10px; font-size: 14px; margin-bottom: 4px; }
+    .btn-horiz { background-color: var(--ocr-color); }
+    .btn-vert { background-color: var(--ocr-vert-color); }
 
     .status { text-align: center; font-size: 12px; color: #888; margin-top: 4px; min-height: 16px; }
     .label-text { font-size:13px; font-weight:600; color:#555; margin-bottom: 2px; }
@@ -150,8 +150,11 @@
 
     <div class="controls">
       <div class="row">
-        <div class="label-text">文字載入 (支援直式/橫式圖片)</div>
-        <button type="button" id="ocr-btn" class="btn btn-ocr">📷 讀取圖片文字</button>
+        <div class="label-text">選擇圖片排列方式載入文字</div>
+        <div class="ocr-options">
+          <button type="button" id="btn-ocr-horiz" class="btn btn-ocr btn-horiz">📷 橫排圖片</button>
+          <button type="button" id="btn-ocr-vert" class="btn btn-ocr btn-vert">📷 直排圖片</button>
+        </div>
         <input type="file" id="image-input" accept="image/*">
       </div>
 
@@ -175,7 +178,7 @@
     </div>
 
     <div class="content-wrapper">
-      <textarea id="text-input" placeholder="請輸入文字或上傳圖片..."></textarea>
+      <textarea id="text-input" placeholder="請選擇上方模式讀取圖片文字，辨識後會自動轉為橫向排列以便讀取。"></textarea>
     </div>
 
   </div>
@@ -191,8 +194,10 @@
     const stopBtn = document.getElementById('stop-btn');
     const loopBtn = document.getElementById('loop-btn');
     const statusMsg = document.getElementById('status-msg');
-    const ocrBtn = document.getElementById('ocr-btn');
+    
     const imageInput = document.getElementById('image-input');
+    const btnOcrHoriz = document.getElementById('btn-ocr-horiz');
+    const btnOcrVert = document.getElementById('btn-ocr-vert');
 
     let bestVoice = null;
     let isLooping = false;
@@ -202,63 +207,77 @@
     let sentenceQueue = [];
     let currentSentenceIndex = 0;
     let loopStartIndex = 0;
+    let loopEndIndex = null;
+    
+    // 目前選擇的辨識模式 (true 為直排)
+    let isVerticalMode = false;
 
-    // --- 強化版 OCR 邏輯 (支援直式轉橫式) ---
-    ocrBtn.addEventListener('click', () => imageInput.click());
+    // --- OCR 功能實作 ---
+    btnOcrHoriz.addEventListener('click', () => {
+      isVerticalMode = false;
+      imageInput.click();
+    });
+
+    btnOcrVert.addEventListener('click', () => {
+      isVerticalMode = true;
+      imageInput.click();
+    });
 
     imageInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
-      statusMsg.textContent = "⌛ 正在偵測排列方向並辨識文字...";
-      ocrBtn.disabled = true;
-      ocrBtn.style.opacity = "0.5";
+      const modeName = isVerticalMode ? "直排" : "橫排";
+      statusMsg.textContent = `⌛ 正在以 [${modeName}] 模式辨識中...`;
+      
+      // 禁用按鈕
+      btnOcrHoriz.disabled = btnOcrVert.disabled = true;
+      btnOcrHoriz.style.opacity = btnOcrVert.style.opacity = "0.5";
 
       try {
         const worker = await Tesseract.createWorker('chi_tra');
         
-        // 設定 PSM (Page Segmentation Mode) 為 1
-        // 1 = Automatic page segmentation with orientation and script detection (OSD).
-        // 這能讓 Tesseract 自動判定圖片文字是直排還是橫排。
+        // 設定頁面分割模式 (Page Segmentation Mode)
+        // PSM 6: 假設為單一均勻的文字塊 (適合一般橫排)
+        // PSM 5: 假設為單一均勻的垂直排列文字塊 (適合直排)
         await worker.setParameters({
-          tessedit_pageseg_mode: 1,
+          tessedit_pageseg_mode: isVerticalMode ? Tesseract.PSM.SINGLE_BLOCK_VERT_TEXT : Tesseract.PSM.SINGLE_BLOCK,
         });
 
         const ret = await worker.recognize(file);
         let rawText = ret.data.text;
 
-        // 【橫式寫入轉換邏輯】
-        // 1. 移除中文字之間的任何空白 (OCR 辨識直排或橫排常會產生誤判空白)
-        let cleanedText = rawText.replace(/([\u4e00-\u9fa5])\s+(?=[\u4e00-\u9fa5])/g, '$1')
-                                 .replace(/([\u4e00-\u9fa5])\s+/g, '$1')
-                                 .replace(/\s+([\u4e00-\u9fa5])/g, '$1');
+        // --- 文字優化：轉為標準橫式排列 ---
+        // 1. 移除中文字之間的空格 (OCR 辨識常會誤加空格)
+        let processedText = rawText.replace(/([\u4e00-\u9fa5])\s+(?=[\u4e00-\u9fa5])/g, '$1')
+                                   .replace(/([\u4e00-\u9fa5])\s+/g, '$1')
+                                   .replace(/\s+([\u4e00-\u9fa5])/g, '$1');
 
-        // 2. 處理斷行：直排文字辨識後每一行末端都會有換行符號。
-        // 將換行符號轉換為正常的流暢橫式文字，僅保留標點符號後的自然停頓感。
-        cleanedText = cleanedText.replace(/([\u4e00-\u9fa5,，])[\r\n]+(?=[^#])/g, '$1'); 
-        
-        // 3. 移除剩餘的孤立換行，確保寫入區塊全部以橫排呈現
-        cleanedText = cleanedText.replace(/[\r\n]+/g, ' ').trim();
+        // 2. 處理強制換行：將非標點結尾的換行符號移除，使其成為連續橫式句子
+        processedText = processedText.replace(/([^。？！.?!;\r\n])[\r\n]+([^#])/g, '$1$2');
 
-        if (cleanedText) {
-          textInput.value = cleanedText;
-          statusMsg.textContent = "✅ 辨識完成 (已轉為橫式排列)";
+        // 3. 修剪首尾空白
+        processedText = processedText.trim();
+
+        if (processedText) {
+          textInput.value = processedText;
+          statusMsg.textContent = `✅ [${modeName}] 辨識成功，已轉為橫式載入`;
         } else {
-          statusMsg.textContent = "❌ 無法辨識內容，請更換圖片";
+          statusMsg.textContent = "❌ 無法讀取文字，請確保圖片文字清晰";
         }
         
         await worker.terminate();
       } catch (error) {
         console.error(error);
-        statusMsg.textContent = "❌ 辨識錯誤，請重新上傳";
+        statusMsg.textContent = "❌ 辨識出錯，請重新嘗試";
       } finally {
-        ocrBtn.disabled = false;
-        ocrBtn.style.opacity = "1";
+        btnOcrHoriz.disabled = btnOcrVert.disabled = false;
+        btnOcrHoriz.style.opacity = btnOcrVert.style.opacity = "1";
         imageInput.value = ""; 
       }
     });
 
-    // --- TTS 核心功能維持不變 ---
+    // --- TTS 原有功能維持 ---
     let audioContext = null;
     function unlockAudioContext() {
       try {
@@ -280,7 +299,8 @@
         const langB = (b.lang || '').toLowerCase().replace('_', '-');
         const getScore = (lang) => {
           if (lang.includes('zh-tw')) return 6;
-          if (lang.includes('zh')) return 4;
+          if (lang.includes('zh-hk')) return 5;
+          if (lang.includes('zh'))    return 4;
           return 0;
         };
         const scoreA = getScore(langA);
@@ -317,11 +337,21 @@
     loopBtn.addEventListener('click', () => {
       isLooping = !isLooping;
       loopBtn.classList.toggle('active', isLooping);
+      if (!isPausedState && (pauseBtn.style.display === 'flex')) {
+        statusMsg.textContent = isLooping ? "🔁 區段循環中" : "播放中";
+      }
     });
 
     function splitTextIntoChunks(text) {
       const regex = /[^#。？！.?!;\n\r]+[。？！.?!;\n\r]*|#/g;
       return text.match(regex) || [text];
+    }
+
+    function findNextHashIndex(startIndex) {
+      for (let i = startIndex; i < sentenceQueue.length; i++) {
+        if ((sentenceQueue[i] || '').trim() === '#') return i;
+      }
+      return null;
     }
 
     function playNextChunk() {
@@ -336,6 +366,7 @@
       if (chunkText.trim() === '#') {
         if (isLooping) {
           currentSentenceIndex = loopStartIndex;
+          statusMsg.textContent = "🔁 區段循環中";
           setTimeout(() => { playNextChunk(); }, 50);
           return;
         }
@@ -374,7 +405,10 @@
         return;
       }
       const fullText = textInput.value;
-      if (fullText.trim() === '') return;
+      if (fullText.trim() === '') {
+        textInput.focus();
+        return;
+      }
 
       const startPos = textInput.selectionStart;
       let textSegment = fullText.substring(startPos).trim();
@@ -386,6 +420,7 @@
       updateUIState('playing');
       sentenceQueue = splitTextIntoChunks(textSegment);
       loopStartIndex = 0;
+      loopEndIndex = findNextHashIndex(loopStartIndex);
 
       setTimeout(() => { playNextChunk(); }, 50);
     }
@@ -405,6 +440,7 @@
     }
 
     function resumeSpeak() {
+      if (!isPausedState) return;
       isPausedState = false;
       isManualStop = false;
       updateUIState('playing');
@@ -419,6 +455,7 @@
     stopBtn.addEventListener('click', (e) => {
       e.preventDefault();
       isManualStop = true;
+      sentenceQueue = [];
       synth.cancel();
       resetUI();
     });
