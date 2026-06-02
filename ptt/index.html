@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>文字轉語音</title>
+  <!-- 引入 Tesseract.js 用於圖片文字辨識 -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    :root { 
+      --primary: #4f46e5; 
+      --text: #333; 
+      --border: #ddd; 
+      --bg: #f9f9f9; 
+      --loop-active: #10b981; 
+      --pause-color: #f59e0b; 
+      --ocr-color: #6366f1;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { 
+      height: 100dvh; 
+      width: 100%; 
+      overflow: hidden; 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #fff; 
+    }
+
+    .widget-container { 
+      display: flex; 
+      flex-direction: column; 
+      height: 100%; 
+      padding: 10px; 
+      background: #fff; 
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    }
+
+    .controls { 
+      flex-shrink: 0; 
+      background: var(--bg); 
+      padding: 10px; 
+      border-radius: 8px; 
+      border: 1px solid #eee; 
+      display: flex; 
+      flex-direction: column; 
+      gap: 8px; 
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+      z-index: 10;
+      margin-bottom: 10px;
+    }
+
+    .content-wrapper {
+      flex-grow: 1;           
+      display: flex;
+      flex-direction: column;
+      min-height: 0; 
+    }
+
+    textarea {
+      width: 100%; 
+      height: 100%;           
+      flex-grow: 1;
+      padding: 15px; 
+      font-size: 17px; 
+      line-height: 1.6;
+      border: 1px solid var(--border); 
+      border-radius: 6px; 
+      outline: none; 
+      resize: none; 
+      color: var(--text);
+      overflow-y: auto;       
+    }
+    textarea:focus { border-color: var(--primary); }
+
+    .row { display: flex; flex-direction: column; gap: 4px; }
+
+    .speed-control-group {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px;
+    }
+
+    .btn-speed {
+      width: 44px;
+      height: 40px;
+      background: #eef2ff;
+      color: var(--primary);
+      border: none;
+      border-radius: 4px;
+      font-size: 20px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-speed:active { background: #dbeafe; }
+
+    .speed-display {
+      font-size: 18px;
+      font-weight: bold;
+      color: var(--text);
+      min-width: 60px;
+      text-align: center;
+    }
+
+    .btn-group { display: flex; gap: 8px; margin-top: 6px; }
+    .btn { 
+      border: none; 
+      border-radius: 6px; 
+      font-size: 16px; 
+      font-weight: 600; 
+      color: white; 
+      cursor: pointer; 
+      display: flex; 
+      justify-content: center; 
+      align-items: center; 
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.9; }
+
+    .btn-main { flex: 2; padding: 14px; } 
+    .btn-play { background-color: var(--primary); }
+    .btn-stop { background-color: #ef4444; display: none; }
+    .btn-pause { background-color: var(--pause-color); display: none; }
+
+    .btn-loop { flex: 1; background-color: #9ca3af; font-size: 20px; }
+    .btn-loop.active { background-color: var(--loop-active); box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
+
+    .btn-ocr { 
+      background-color: var(--ocr-color); 
+      padding: 10px; 
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .status { text-align: center; font-size: 12px; color: #888; margin-top: 4px; min-height: 16px; }
+    .label-text { font-size:13px; font-weight:600; color:#555; margin-bottom: 2px; }
+    
+    #image-input { display: none; }
+  </style>
+</head>
+
+<body>
+  <div class="widget-container">
+
+    <div class="controls">
+      <div class="row">
+        <div class="label-text">文字載入 (支援直式/橫式圖片)</div>
+        <button type="button" id="ocr-btn" class="btn btn-ocr">📷 讀取圖片文字</button>
+        <input type="file" id="image-input" accept="image/*">
+      </div>
+
+      <div class="row">
+        <div class="label-text">語速 (Speed)</div>
+        <div class="speed-control-group">
+          <button type="button" id="btn-slow" class="btn-speed">－</button>
+          <span id="rate-display" class="speed-display">1.0</span>
+          <button type="button" id="btn-fast" class="btn-speed">＋</button>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button type="button" id="play-btn" class="btn btn-main btn-play">▶ 播放</button>
+        <button type="button" id="pause-btn" class="btn btn-main btn-pause">⏸ 暫停</button>
+        <button type="button" id="stop-btn" class="btn btn-main btn-stop">⏹ 停止</button>
+        <button type="button" id="loop-btn" class="btn btn-loop" title="重複播放">🔁</button>
+      </div>
+
+      <div class="status" id="status-msg"></div>
+    </div>
+
+    <div class="content-wrapper">
+      <textarea id="text-input" placeholder="請輸入文字或上傳圖片..."></textarea>
+    </div>
+
+  </div>
+
+  <script>
+    const synth = window.speechSynthesis;
+    const textInput = document.getElementById('text-input');
+    const btnSlow = document.getElementById('btn-slow');
+    const btnFast = document.getElementById('btn-fast');
+    const rateDisplay = document.getElementById('rate-display');
+    const playBtn = document.getElementById('play-btn');
+    const pauseBtn = document.getElementById('pause-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const loopBtn = document.getElementById('loop-btn');
+    const statusMsg = document.getElementById('status-msg');
+    const ocrBtn = document.getElementById('ocr-btn');
+    const imageInput = document.getElementById('image-input');
+
+    let bestVoice = null;
+    let isLooping = false;
+    let isManualStop = false;
+    let isPausedState = false;
+    let currentRate = 1.0;
+    let sentenceQueue = [];
+    let currentSentenceIndex = 0;
+    let loopStartIndex = 0;
+
+    // --- 強化版 OCR 邏輯 (支援直式轉橫式) ---
+    ocrBtn.addEventListener('click', () => imageInput.click());
+
+    imageInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      statusMsg.textContent = "⌛ 正在偵測排列方向並辨識文字...";
+      ocrBtn.disabled = true;
+      ocrBtn.style.opacity = "0.5";
+
+      try {
+        const worker = await Tesseract.createWorker('chi_tra');
+        
+        // 設定 PSM (Page Segmentation Mode) 為 1
+        // 1 = Automatic page segmentation with orientation and script detection (OSD).
+        // 這能讓 Tesseract 自動判定圖片文字是直排還是橫排。
+        await worker.setParameters({
+          tessedit_pageseg_mode: 1,
+        });
+
+        const ret = await worker.recognize(file);
+        let rawText = ret.data.text;
+
+        // 【橫式寫入轉換邏輯】
+        // 1. 移除中文字之間的任何空白 (OCR 辨識直排或橫排常會產生誤判空白)
+        let cleanedText = rawText.replace(/([\u4e00-\u9fa5])\s+(?=[\u4e00-\u9fa5])/g, '$1')
+                                 .replace(/([\u4e00-\u9fa5])\s+/g, '$1')
+                                 .replace(/\s+([\u4e00-\u9fa5])/g, '$1');
+
+        // 2. 處理斷行：直排文字辨識後每一行末端都會有換行符號。
+        // 將換行符號轉換為正常的流暢橫式文字，僅保留標點符號後的自然停頓感。
+        cleanedText = cleanedText.replace(/([\u4e00-\u9fa5,，])[\r\n]+(?=[^#])/g, '$1'); 
+        
+        // 3. 移除剩餘的孤立換行，確保寫入區塊全部以橫排呈現
+        cleanedText = cleanedText.replace(/[\r\n]+/g, ' ').trim();
+
+        if (cleanedText) {
+          textInput.value = cleanedText;
+          statusMsg.textContent = "✅ 辨識完成 (已轉為橫式排列)";
+        } else {
+          statusMsg.textContent = "❌ 無法辨識內容，請更換圖片";
+        }
+        
+        await worker.terminate();
+      } catch (error) {
+        console.error(error);
+        statusMsg.textContent = "❌ 辨識錯誤，請重新上傳";
+      } finally {
+        ocrBtn.disabled = false;
+        ocrBtn.style.opacity = "1";
+        imageInput.value = ""; 
+      }
+    });
+
+    // --- TTS 核心功能維持不變 ---
+    let audioContext = null;
+    function unlockAudioContext() {
+      try {
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === 'suspended') audioContext.resume();
+        const buffer = audioContext.createBuffer(1, 1, 22050);
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+        source.start(0);
+      } catch (e) {}
+    }
+
+    function autoSelectBestVoice() {
+      const allVoices = synth.getVoices();
+      if (!allVoices || allVoices.length === 0) return;
+      const sortedVoices = [...allVoices].sort((a, b) => {
+        const langA = (a.lang || '').toLowerCase().replace('_', '-');
+        const langB = (b.lang || '').toLowerCase().replace('_', '-');
+        const getScore = (lang) => {
+          if (lang.includes('zh-tw')) return 6;
+          if (lang.includes('zh')) return 4;
+          return 0;
+        };
+        const scoreA = getScore(langA);
+        const scoreB = getScore(langB);
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      bestVoice = sortedVoices[0] || null;
+    }
+
+    autoSelectBestVoice();
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+      speechSynthesis.onvoiceschanged = autoSelectBestVoice;
+    }
+
+    btnSlow.addEventListener('click', () => {
+      if (currentRate > 0.5) {
+        currentRate = parseFloat((currentRate - 0.1).toFixed(1));
+        updateRateDisplay();
+      }
+    });
+
+    btnFast.addEventListener('click', () => {
+      if (currentRate < 3.0) {
+        currentRate = parseFloat((currentRate + 0.1).toFixed(1));
+        updateRateDisplay();
+      }
+    });
+
+    function updateRateDisplay() {
+      rateDisplay.textContent = currentRate.toFixed(1);
+    }
+
+    loopBtn.addEventListener('click', () => {
+      isLooping = !isLooping;
+      loopBtn.classList.toggle('active', isLooping);
+    });
+
+    function splitTextIntoChunks(text) {
+      const regex = /[^#。？！.?!;\n\r]+[。？！.?!;\n\r]*|#/g;
+      return text.match(regex) || [text];
+    }
+
+    function playNextChunk() {
+      if (isManualStop || isPausedState) return;
+      if (currentSentenceIndex >= sentenceQueue.length) {
+        resetUI();
+        return;
+      }
+
+      const chunkText = sentenceQueue[currentSentenceIndex];
+
+      if (chunkText.trim() === '#') {
+        if (isLooping) {
+          currentSentenceIndex = loopStartIndex;
+          setTimeout(() => { playNextChunk(); }, 50);
+          return;
+        }
+        currentSentenceIndex++;
+        pauseSpeak();
+        statusMsg.textContent = "已暫停";
+        return;
+      }
+
+      const utterThis = new SpeechSynthesisUtterance(chunkText);
+      if (bestVoice) {
+        utterThis.voice = bestVoice;
+        utterThis.lang = bestVoice.lang;
+      }
+      utterThis.rate = currentRate;
+
+      utterThis.onend = () => {
+        if (isManualStop || isPausedState) return;
+        currentSentenceIndex++;
+        playNextChunk();
+      };
+
+      utterThis.onerror = (e) => {
+        if (e.error !== 'interrupted') {
+          currentSentenceIndex++;
+          playNextChunk();
+        }
+      };
+
+      synth.speak(utterThis);
+    }
+
+    function speak() {
+      if (isPausedState) {
+        resumeSpeak();
+        return;
+      }
+      const fullText = textInput.value;
+      if (fullText.trim() === '') return;
+
+      const startPos = textInput.selectionStart;
+      let textSegment = fullText.substring(startPos).trim();
+      if (textSegment.length === 0) textSegment = fullText.trim();
+
+      isManualStop = false;
+      isPausedState = false;
+      currentSentenceIndex = 0;
+      updateUIState('playing');
+      sentenceQueue = splitTextIntoChunks(textSegment);
+      loopStartIndex = 0;
+
+      setTimeout(() => { playNextChunk(); }, 50);
+    }
+
+    playBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      isManualStop = true;
+      synth.cancel();
+      unlockAudioContext();
+      setTimeout(() => { speak(); }, 120);
+    });
+
+    function pauseSpeak() {
+      isPausedState = true;
+      synth.cancel();
+      updateUIState('paused');
+    }
+
+    function resumeSpeak() {
+      isPausedState = false;
+      isManualStop = false;
+      updateUIState('playing');
+      playNextChunk();
+    }
+
+    pauseBtn.addEventListener('click', () => {
+      if (isPausedState) resumeSpeak();
+      else pauseSpeak();
+    });
+
+    stopBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      isManualStop = true;
+      synth.cancel();
+      resetUI();
+    });
+
+    function updateUIState(state) {
+      if (state === 'playing') {
+        playBtn.style.display = 'none';
+        pauseBtn.style.display = 'flex';
+        pauseBtn.textContent = "⏸ 暫停";
+        stopBtn.style.display = 'flex';
+        statusMsg.textContent = isLooping ? "🔁 區段循環中" : "播放中";
+      } else if (state === 'paused') {
+        playBtn.style.display = 'none';
+        pauseBtn.style.display = 'flex';
+        pauseBtn.textContent = "▶ 繼續";
+        statusMsg.textContent = "暫停";
+      } else {
+        playBtn.style.display = 'flex';
+        pauseBtn.style.display = 'none';
+        stopBtn.style.display = 'none';
+        statusMsg.textContent = "";
+      }
+    }
+
+    function resetUI() {
+      isPausedState = false;
+      isManualStop = false;
+      currentSentenceIndex = 0;
+      updateUIState('stopped');
+    }
+  </script>
+</body>
+</html>
